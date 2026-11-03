@@ -85,7 +85,7 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
   function getLesson(id){return lessons().find(x=>x.id===id);}
   function findCard(id){return cards().find(x=>x.id===id);}
   function findQuestion(id){return BUILTIN.questions.find(x=>x.id===id);}
-  function shuffle(arr){const result=[...arr];for(let i=result.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[result[i],result[j]]=[result[j],result[i]];}return result;}
+  function shuffle(arr){const result=[...arr];for(let i=result.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[result[i],result[j]]=[result[j],result[i]];}if(result.length>1&&result.every((id,i)=>id===arr[i])){const first=result.shift();result.push(first);}return result;}
   function masteryFor(id){return data.mastery[id]||'';}
   function masteryCount(lesson='all'){return cards().filter(c=>lesson==='all'||c.lesson===lesson).filter(c=>masteryFor(c.id)==='mastered').length;}
   function attemptedCards(){return cards().filter(c=>data.mastery[c.id]).length;}
@@ -99,21 +99,64 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
   function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toast._timeout);toast._timeout=setTimeout(()=>el.classList.remove('show'),3600);}
   let app = {
     page:'dashboard', lessonId:null, lessonQuery:'', lessonFilter:'all', globalQuery:'',
-    flash:{lesson:'all',filter:'all',order:[],index:0,flipped:false},
+    flash:{lesson:'all',filter:'all',order:[],index:0,flipped:false,phase:'initial',finished:false},
     recall:{lesson:'all',filter:'all',order:[],index:0,revealed:false},
     quizFilters:{lesson:'all',difficulty:'all',count:20,shuffleAnswers:true,timed:false},
     activeQuiz:null, result:null, timerId:null
   };
   function visitLesson(id){if (!getLesson(id))return;data.recent=[id,...data.recent.filter(x=>x!==id)].slice(0,12);activity('lesson',id);}
+  let routeTicket=0,flashTransitionTicket=0,flashBusy=false;
+  const prefersLessMotion=()=>window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function renderRoute(){
+    const ticket=++routeTicket;
+    main.classList.remove('route-enter');
+    if(prefersLessMotion()||!main.firstElementChild){main.classList.remove('route-leave');render();return;}
+    main.classList.add('route-leave');
+    setTimeout(()=>{
+      if(ticket!==routeTicket)return;
+      main.classList.remove('route-leave');
+      render();
+      main.classList.add('route-enter');
+      setTimeout(()=>{if(ticket===routeTicket)main.classList.remove('route-enter');},380);
+    },125);
+  }
+  function cancelFlashAnimation(){flashTransitionTicket++;flashBusy=false;}
+  function animateFlashChange(update){
+    if(flashBusy)return;
+    flashBusy=true;const ticket=++flashTransitionTicket;
+    const card=$('#flip-scene');
+    if(!card||prefersLessMotion()){
+      flashBusy=false;update();render();return;
+    }
+    card.classList.add('flash-exit');
+    setTimeout(()=>{
+      if(ticket!==flashTransitionTicket||app.page!=='flashcards')return;
+      flashBusy=false;update();render();
+      $('#flip-scene')?.classList.add('flash-enter');
+      $('#flash-finished')?.classList.add('flash-enter');
+    },130);
+  }
+  function setFlashFlipped(next){
+    const f=app.flash;
+    if(flashBusy||f.finished||!$('#flip-scene'))return;
+    f.flipped=next;
+    const scene=$('#flip-scene');
+    scene.classList.toggle('flipped',next);
+    scene.setAttribute('aria-pressed',String(next));
+    scene.setAttribute('aria-label',next?'Flashcard. Answer shown. Activate to flip back.':'Flashcard. Definition shown. Activate to reveal answer.');
+    const button=$('[data-action="flash-flip"]');
+    if(button)button.textContent=next?'Show definition ↻':'Reveal answer ↻';
+  }
   function go(page,opts={}){
     if (!NAV_LABELS[page])return;
+    cancelFlashAnimation();
     if (opts.lesson) app.lessonId=opts.lesson;
     else if (page==='lessons') app.lessonId=null;
     app.page=page;
     if(page==='lessons' && app.lessonId && opts.lesson)visitLesson(opts.lesson);
     if(page==='flashcards')syncFlash();
     if(page==='recall')syncRecall();
-    closeModal();closeMobile();render();
+    closeModal();closeMobile();renderRoute();
     window.scrollTo({top:0,behavior:'auto'});
   }
   function refreshNav(){
@@ -178,13 +221,49 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
       <aside class="card reader-aside"><h3>In this lesson</h3><div style="display:grid;gap:5px">${l.sections.map((s,i)=>`<button class="toc-link" data-action="jump-section" data-index="${i}">${i+1}. ${escapeHTML(s.title)}</button>`).join('')}</div><div class="divider-line"></div><p class="source-scope">${masteryCount(l.id)} / ${lessonCards.length} concepts mastered</p>${bar(masteryCount(l.id),lessonCards.length)}<div class="mini-stat"><span>Completion</span><strong>${done?'Done':'Not yet'}</strong></div></aside></div>`;
   }
   function filterCards(mode){
-    const f=app[mode];return cards().filter(c=>(f.lesson==='all'||c.lesson===f.lesson)&&(f.filter==='all'||masteryFor(c.id)===(f.filter==='review'?'review':'mastered')));
+    const f=app[mode];return cards().filter(c=>(f.lesson==='all'||c.lesson===f.lesson)&&(f.filter==='all'||(f.filter==='unmastered'?masteryFor(c.id)!=='mastered':masteryFor(c.id)===f.filter)));
   }
   function syncFlash(reset=false){
-    const f=app.flash;const available=filterCards('flash').map(c=>c.id);
-    if(reset){f.order=available;f.index=0;f.flipped=false;return;}
-    f.order=f.order.filter(id=>available.includes(id));for(const id of available)if(!f.order.includes(id))f.order.push(id);
+    const f=app.flash,available=filterCards('flash').map(c=>c.id);
+    if(reset){f.order=shuffle(available);f.index=0;f.flipped=false;f.phase='initial';f.finished=false;return;}
+    const ids=new Set(available);
+    f.order=f.order.filter(id=>ids.has(id));
+    for(const id of available)if(!f.order.includes(id))f.order.push(id);
     f.index=clamp(f.index,0,Math.max(0,f.order.length-1));
+  }
+  function nonMasteredCards(lesson=app.flash.lesson){
+    return cards().filter(c=>(lesson==='all'||c.lesson===lesson)&&masteryFor(c.id)!=='mastered');
+  }
+  function flashRemainingTags(){
+    const remaining=nonMasteredCards();
+    if(!remaining.length)return '<p class="source-scope">All concepts in this selection are mastered. Great work!</p>';
+    return `<div class="remaining-tags" aria-label="Concepts still to master">${remaining.map(c=>`<span class="remaining-tag"><span class="remaining-tag-dot" aria-hidden="true"></span>${escapeHTML(c.back)}</span>`).join('')}</div>`;
+  }
+  function finishFlashPass(){
+    const f=app.flash;
+    f.flipped=false;
+    if(f.phase==='initial'&&f.filter!=='unmastered'&&f.filter!=='mastered'){
+      f.filter='unmastered';
+      f.phase='remaining';
+      f.order=shuffle(filterCards('flash').map(c=>c.id));
+      f.index=0;
+      f.finished=f.order.length===0;
+      return;
+    }
+    f.finished=true;
+  }
+  function advanceFlash(){
+    const f=app.flash;
+    if(f.finished||!f.order.length)return;
+    if(f.index<f.order.length-1){f.index++;f.flipped=false;}
+    else finishFlashPass();
+  }
+  function restartFlash(remaining=false){
+    const f=app.flash;
+    f.filter=remaining?'unmastered':'all';
+    syncFlash(true);
+    f.phase=remaining?'remaining':'initial';
+    f.finished=!f.order.length&&remaining;
   }
   function syncRecall(reset=false){
     const f=app.recall;const available=filterCards('recall').map(c=>c.id);
@@ -193,17 +272,27 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
     f.index=clamp(f.index,0,Math.max(0,f.order.length-1));
   }
   function lessonSelect(value,id,includeAll=true){return `<select class="select" id="${id}" aria-label="Choose lesson">${includeAll?'<option value="all">All lessons</option>':''}${lessons().map(l=>`<option value="${escapeHTML(l.id)}" ${value===l.id?'selected':''}>${escapeHTML(l.title)}</option>`).join('')}</select>`;}
-  function modeFilter(value,id){return `<select class="select" id="${id}" aria-label="Filter by mastery"><option value="all" ${value==='all'?'selected':''}>All cards</option><option value="review" ${value==='review'?'selected':''}>Needs review</option><option value="mastered" ${value==='mastered'?'selected':''}>Mastered</option></select>`;}
+  function modeFilter(value,id){return `<select class="select" id="${id}" aria-label="Filter by mastery"><option value="all" ${value==='all'?'selected':''}>All cards</option><option value="unmastered" ${value==='unmastered'?'selected':''}>Not mastered</option><option value="review" ${value==='review'?'selected':''}>Needs review</option><option value="mastered" ${value==='mastered'?'selected':''}>Mastered</option></select>`;}
   function renderFlashcards(){
-    syncFlash();const f=app.flash,card=findCard(f.order[f.index]);const available=f.order.length;
-    return `${heading('MEMORIZE WITH CONFIDENCE','Interactive flashcards','Read the definition first, try to recall the term, then flip to check your answer.',`${btn('↻ Shuffle','flash-shuffle')}${btn('Reset filters','flash-reset')}`)}
-      <div class="filter-bar">${lessonSelect(f.lesson,'flash-lesson')}${modeFilter(f.filter,'flash-filter')}${pill(`${available} cards`,'accent')}${pill(`${masteryCount()} mastered`,'green')}</div>
-      ${!card?noContent('No matching flashcards','Try All cards, choose a different lesson, or add term :: definition pairs to your notes.'):`<div class="study-layout"><div><div class="flash-subhead"><span>Card <strong>${f.index+1}</strong> of ${available}</span><span>${escapeHTML(getLesson(card.lesson)?.title||'Your notes')} · ${card.page?`PDF p. ${card.page}`:'Pasted notes'}</span></div>
+    syncFlash();
+    const f=app.flash,card=f.finished?null:findCard(f.order[f.index]),available=f.order.length;
+    const remaining=nonMasteredCards();
+    const controls=`${btn('↻ Shuffle','flash-shuffle')}${btn('Reset & shuffle','flash-reset','','btn-primary')}`;
+    const intro=heading('MEMORIZE WITH CONFIDENCE','Interactive flashcards','Read the definition first, try to recall the term, then flip to check your answer.',controls);
+    const filters=`<div class="filter-bar">${lessonSelect(f.lesson,'flash-lesson')}${modeFilter(f.filter,'flash-filter')}${pill(`${available} cards`,'accent')}${pill(`${masteryCount(f.lesson)} mastered`,'green')}</div>`;
+    const hint='<p class="flash-reset-hint">Reset & shuffle restarts the selected lesson’s deck in a new order without clearing mastery.</p>';
+    if(f.finished){
+      const allDone=remaining.length===0;
+      return `${intro}${filters}${hint}<section class="card flash-finished" id="flash-finished" aria-live="polite"><span class="finished-symbol" aria-hidden="true">${allDone?'✦':'◫'}</span><p class="eyebrow">REVIEW SESSION COMPLETE</p><h2>${allDone?'All concepts mastered!':'Here’s what still needs practice'}</h2><p>${allDone?'You have mastered every concept in this lesson selection.':'These are the non-mastered terms. Your progress is saved, and you can study them again in a freshly shuffled order.'}</p><div class="remaining-summary"><strong>${remaining.length} concepts remaining</strong>${flashRemainingTags()}</div><div class="button-row" style="justify-content:center">${remaining.length?btn('Review remaining cards →','flash-review-again','','btn-primary'):''}${btn('↻ Reset & shuffle all','flash-reset')}</div></section>`;
+    }
+    const followup=f.phase==='remaining'?`<section class="remaining-banner" aria-live="polite"><div><p class="eyebrow">FOCUSED FOLLOW-UP</p><h2>${remaining.length} non-mastered concepts left</h2><p>The first pass is complete. Only cards you have not mastered appear now.</p></div>${flashRemainingTags()}</section>`:'';
+    const body=!card?noContent('No matching flashcards','Choose All cards or another lesson, or add Term :: Definition pairs to your notes.'):`<div class="study-layout"><div><div class="flash-subhead"><span>Card <strong>${f.index+1}</strong> of ${available}</span><span>${escapeHTML(getLesson(card.lesson)?.title||'Your notes')} · ${card.page?`PDF p. ${card.page}`:'Pasted notes'}</span></div>
       <div class="flip-scene ${f.flipped?'flipped':''}" id="flip-scene" role="button" tabindex="0" aria-label="Flashcard. ${f.flipped?'Answer shown. Activate to flip back.':'Definition shown. Activate to reveal answer.'}" aria-pressed="${f.flipped}">
-        <div class="flip-card"><div class="flip-face front"><div class="flip-face-label">FRONT · DEFINITION</div><div class="flash-text">${escapeHTML(card.front)}</div><p class="flash-hint">Click or press Space to reveal the term ↻</p></div><div class="flip-face back"><div class="flip-face-label">BACK · TERM / ANSWER</div><div class="flash-text">${escapeHTML(card.back)}</div><p class="flash-hint">${escapeHTML(card.detail||'')}</p></div></div></div>
-      <div class="flash-controls">${btn('← Previous','flash-prev',f.index===0?'disabled':'')}${btn(f.flipped?'Show definition ↻':'Reveal answer ↻','flash-flip','','btn-primary')}${btn('Next →','flash-next',f.index>=available-1?'disabled':'')}</div>
+      <div class="flip-card"><div class="flip-face front"><div class="flip-face-label">FRONT · DEFINITION</div><div class="flash-text">${escapeHTML(card.front)}</div><p class="flash-hint">Click or press Space to reveal the term ↻</p></div><div class="flip-face back"><div class="flip-face-label">BACK · TERM / ANSWER</div><div class="flash-text">${escapeHTML(card.back)}</div><p class="flash-hint">${escapeHTML(card.detail||'')}</p></div></div></div>
+      <div class="flash-controls">${btn('← Previous','flash-prev',f.index===0?'disabled':'')}${btn(f.flipped?'Show definition ↻':'Reveal answer ↻','flash-flip','','btn-primary')}${btn(f.index>=available-1?'Finish pass →':'Next →','flash-next')}</div>
       <div class="flash-status-btns">${btn('↻ Needs review','flash-mark',`data-value="review" data-id="${escapeHTML(card.id)}"`,masteryFor(card.id)==='review'?'btn-muted':'')}${btn('✓ Mastered','flash-mark',`data-value="mastered" data-id="${escapeHTML(card.id)}"`,masteryFor(card.id)==='mastered'?'btn-primary':'')}</div></div>
-      <aside class="card flash-sidebar"><h3>Learning progress</h3><div class="mini-stat"><span>Mastered</span><strong>${masteryCount(f.lesson)}</strong></div><div class="mini-stat"><span>Needs review</span><strong>${cards().filter(c=>(f.lesson==='all'||c.lesson===f.lesson)&&masteryFor(c.id)==='review').length}</strong></div><div class="mini-stat"><span>Unmarked</span><strong>${cards().filter(c=>(f.lesson==='all'||c.lesson===f.lesson)&&!masteryFor(c.id)).length}</strong></div>${bar(masteryCount(f.lesson),cards().filter(c=>f.lesson==='all'||c.lesson===f.lesson).length)}<div class="divider-line"></div><p class="source-scope">Keyboard shortcuts</p><div class="mini-stat"><span>Previous / Next</span><strong>← / →</strong></div><div class="mini-stat"><span>Flip card</span><strong>Space</strong></div><div class="divider-line"></div>${pill(masteryFor(card.id)==='mastered'?'✓ Mastered':masteryFor(card.id)==='review'?'Needs review':'Not yet rated',masteryFor(card.id)==='mastered'?'green':masteryFor(card.id)==='review'?'orange':'')}</aside></div>`}`;
+      <aside class="card flash-sidebar"><h3>Learning progress</h3><div class="mini-stat"><span>Mastered</span><strong>${masteryCount(f.lesson)}</strong></div><div class="mini-stat"><span>Needs review</span><strong>${cards().filter(c=>(f.lesson==='all'||c.lesson===f.lesson)&&masteryFor(c.id)==='review').length}</strong></div><div class="mini-stat"><span>Unmarked</span><strong>${cards().filter(c=>(f.lesson==='all'||c.lesson===f.lesson)&&!masteryFor(c.id)).length}</strong></div>${bar(masteryCount(f.lesson),cards().filter(c=>f.lesson==='all'||c.lesson===f.lesson).length)}<div class="divider-line"></div><p class="source-scope">Keyboard shortcuts</p><div class="mini-stat"><span>Previous / Next</span><strong>← / →</strong></div><div class="mini-stat"><span>Flip card</span><strong>Space</strong></div><div class="divider-line"></div>${pill(masteryFor(card.id)==='mastered'?'✓ Mastered':masteryFor(card.id)==='review'?'Needs review':'Not yet rated',masteryFor(card.id)==='mastered'?'green':masteryFor(card.id)==='review'?'orange':'')}</aside></div>`;
+    return `${intro}${filters}${hint}${followup}${body}`;
   }
   function renderRecall(){
     syncRecall();const f=app.recall,card=findCard(f.order[f.index]);
@@ -317,11 +406,22 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
       } catch(err){toast(`Import failed: ${err.message}`);} };reader.readAsText(file);
   }
   function resetData(){if(!confirm('Reset all lesson completion, flashcard mastery, quiz results, and pasted lessons on this browser? This cannot be undone unless you exported a backup.'))return;
-    const theme=data.theme,collapsed=data.collapsed;data=DEFAULTS();data.theme=theme;data.collapsed=collapsed;save();app.lessonId=null;app.flash={lesson:'all',filter:'all',order:[],index:0,flipped:false};app.recall={lesson:'all',filter:'all',order:[],index:0,revealed:false};app.activeQuiz=null;app.result=null;clearInterval(app.timerId);go('dashboard');toast('Saved study progress reset.');
+    const theme=data.theme,collapsed=data.collapsed;data=DEFAULTS();data.theme=theme;data.collapsed=collapsed;save();app.lessonId=null;app.flash={lesson:'all',filter:'all',order:[],index:0,flipped:false,phase:'initial',finished:false};app.recall={lesson:'all',filter:'all',order:[],index:0,revealed:false};app.activeQuiz=null;app.result=null;clearInterval(app.timerId);go('dashboard');toast('Saved study progress reset.');
   }
-  function markFlash(id,value){if(!findCard(id))return;data.mastery[id]=value;activity('flashcard',findCard(id).lesson);app.flash.flipped=false;
-    // In a filtered deck, marking a card can remove it. Keep the next available card in view.
-    syncFlash();if(app.flash.order.length)app.flash.index=Math.min(app.flash.index,app.flash.order.length-1);render();toast(value==='mastered'?'Marked as mastered.':'Added to Needs Review.');
+  function markFlash(id,value){
+    const f=app.flash,c=findCard(id);
+    if(!c||f.finished||f.order[f.index]!==id||!['mastered','review'].includes(value))return;
+    animateFlashChange(()=>{
+      const oldOrder=[...f.order],oldIndex=f.index;
+      data.mastery[id]=value;
+      activity('flashcard',c.lesson);
+      f.flipped=false;
+      syncFlash();
+      const nextId=oldOrder.slice(oldIndex+1).find(next=>f.order.includes(next));
+      if(nextId)f.index=f.order.indexOf(nextId);
+      else finishFlashPass();
+      toast(value==='mastered'?'Mastered! Moving to the next card.':'Saved for review. Moving on.');
+    });
   }
   function rateRecall(id,value){const c=findCard(id);if(!c)return;const stats=data.recall[id]||{yes:0,no:0};stats[value]=Math.min(1000,(stats[value]||0)+1);data.recall[id]=stats;
     data.mastery[id]=value==='yes'?'mastered':'review';activity('recall',c.lesson);app.recall.revealed=false;
@@ -343,12 +443,13 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
       case 'lesson-flash':app.flash.lesson=id;app.flash.filter='all';syncFlash(true);go('flashcards');break;
       case 'lesson-quiz':app.quizFilters.lesson=id;app.quizFilters.difficulty='all';app.result=null;go('quiz');break;
       case 'jump-section':$('#section-'+idx)?.scrollIntoView({behavior:'smooth',block:'start'});break;
-      case 'flash-prev':if(app.flash.index>0){app.flash.index--;app.flash.flipped=false;render();}break;
-      case 'flash-next':if(app.flash.index<app.flash.order.length-1){app.flash.index++;app.flash.flipped=false;render();}else toast('End of this flashcard deck.');break;
-      case 'flash-flip':app.flash.flipped=!app.flash.flipped;render();break;
+      case 'flash-prev':if(app.flash.index>0&&!app.flash.finished)animateFlashChange(()=>{app.flash.index--;app.flash.flipped=false;});break;
+      case 'flash-next':if(!app.flash.finished&&app.flash.order.length)animateFlashChange(advanceFlash);break;
+      case 'flash-flip':setFlashFlipped(!app.flash.flipped);break;
       case 'flash-mark':markFlash(id,val);break;
-      case 'flash-shuffle':syncFlash();app.flash.order=shuffle(app.flash.order);app.flash.index=0;app.flash.flipped=false;render();toast('Flashcards shuffled.');break;
-      case 'flash-reset':app.flash.lesson='all';app.flash.filter='all';syncFlash(true);render();break;
+      case 'flash-shuffle':cancelFlashAnimation();app.flash.order=shuffle(app.flash.order);app.flash.index=0;app.flash.flipped=false;app.flash.finished=false;render();toast('Flashcard order shuffled.');break;
+      case 'flash-reset':cancelFlashAnimation();restartFlash(false);render();toast('Deck reset and shuffled. Mastery is preserved.');break;
+      case 'flash-review-again':cancelFlashAnimation();restartFlash(true);render();toast('Reviewing non-mastered concepts in a new order.');break;
       case 'recall-prev':app.recall.index=Math.max(0,app.recall.index-1);app.recall.revealed=false;render();break;
       case 'recall-next':app.recall.index=Math.min(app.recall.order.length-1,app.recall.index+1);app.recall.revealed=false;render();break;
       case 'recall-shuffle':app.recall.order=shuffle(app.recall.order);app.recall.index=0;app.recall.revealed=false;render();break;
@@ -377,14 +478,14 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
   document.addEventListener('click',event=>{
     const nav=event.target.closest('[data-page]');if(nav){go(nav.dataset.page);return;}
     const act=event.target.closest('[data-action]');if(act){onAction(act.dataset.action,act);return;}
-    if(event.target.closest('#flip-scene')){app.flash.flipped=!app.flash.flipped;render();return;}
+    if(event.target.closest('#flip-scene')){setFlashFlipped(!app.flash.flipped);return;}
     if(event.target.matches('[data-close-modal]'))closeModal();
   });
   document.addEventListener('change',event=>{
     const el=event.target;
     switch(el.id){
-      case 'flash-lesson':app.flash.lesson=el.value;syncFlash(true);render();break;
-      case 'flash-filter':app.flash.filter=el.value;syncFlash(true);render();break;
+      case 'flash-lesson':cancelFlashAnimation();app.flash.lesson=el.value;syncFlash(true);render();break;
+      case 'flash-filter':cancelFlashAnimation();app.flash.filter=el.value;syncFlash(true);render();break;
       case 'recall-lesson':app.recall.lesson=el.value;syncRecall(true);render();break;
       case 'recall-filter':app.recall.filter=el.value;syncRecall(true);render();break;
       case 'quiz-lesson':app.quizFilters.lesson=el.value;render();break;
@@ -415,12 +516,12 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
     if(event.key==='Escape'){if(modalOpen){closeModal();event.preventDefault();return;}closeMobile();return;}
     if(!editing&&!modalOpen&&event.key==='/'){event.preventDefault();openSearch();return;}
     if(modalOpen||editing)return;
-    if(app.page==='flashcards'&&app.flash.order.length){
+    if(app.page==='flashcards'&&app.flash.order.length&&!app.flash.finished){
       if(event.key==='ArrowRight'){event.preventDefault();onAction('flash-next',{dataset:{}});}
       else if(event.key==='ArrowLeft'){event.preventDefault();onAction('flash-prev',{dataset:{}});}
       else if(event.code==='Space'||event.key==='Enter'&&document.activeElement?.id==='flip-scene'){
         if(event.code==='Space'&&document.activeElement?.tagName==='BUTTON')return;
-        event.preventDefault();app.flash.flipped=!app.flash.flipped;render();
+        event.preventDefault();setFlashFlipped(!app.flash.flipped);
       }
     }
   });
