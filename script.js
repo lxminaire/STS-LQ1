@@ -447,7 +447,7 @@ const BUILTIN = {"lessons":[{"id":"zoonoses","title":"Zoonotic Diseases & Host S
       case 'flash-next':if(!app.flash.finished&&app.flash.order.length)animateFlashChange(advanceFlash);break;
       case 'flash-flip':setFlashFlipped(!app.flash.flipped);break;
       case 'flash-mark':markFlash(id,val);break;
-      case 'flash-shuffle':cancelFlashAnimation();app.flash.order=shuffle(app.flash.order);app.flash.index=0;app.flash.flipped=false;app.flash.finished=false;render();toast('Flashcard order shuffled.');break;
+      case 'flash-shuffle':cancelFlashAnimation();if(app.flash.finished&&!app.flash.order.length)restartFlash(false);else{app.flash.order=shuffle(app.flash.order);app.flash.index=0;app.flash.flipped=false;app.flash.finished=false;}render();toast('Flashcard order shuffled.');break;
       case 'flash-reset':cancelFlashAnimation();restartFlash(false);render();toast('Deck reset and shuffled. Mastery is preserved.');break;
       case 'flash-review-again':cancelFlashAnimation();restartFlash(true);render();toast('Reviewing non-mastered concepts in a new order.');break;
       case 'recall-prev':app.recall.index=Math.max(0,app.recall.index-1);app.recall.revealed=false;render();break;
