@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f7f8fb">
+  <meta name="description" content="Offline-first STS Long Quiz 1 interactive reviewer with lessons, flashcards, active recall, and quizzes.">
+  <title>StudySpace · STS Long Quiz 1</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="scrim" id="scrim" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+      <div class="brand-row">
+        <div class="brand-logo" aria-hidden="true">✳</div>
+        <div class="brand-copy"><strong>studyspace<span class="brand-dot">.</span></strong><span>Your personal reviewer</span></div>
+        <button class="icon-btn sidebar-close" id="sidebar-close" aria-label="Close sidebar">✕</button>
+      </div>
+      <div class="sidebar-content">
+        <p class="sidebar-label">WORKSPACE</p>
+        <nav class="nav-list" aria-label="Study modes">
+          <button data-page="dashboard" class="nav-link active"><span class="nav-icon">▦</span><span>Dashboard</span></button>
+          <button data-page="lessons" class="nav-link"><span class="nav-icon">▤</span><span>Lesson reviewer</span></button>
+          <button data-page="flashcards" class="nav-link"><span class="nav-icon">◫</span><span>Flashcards</span></button>
+          <button data-page="quiz" class="nav-link"><span class="nav-icon">☷</span><span>Practice quiz</span></button>
+          <button data-page="recall" class="nav-link"><span class="nav-icon">◎</span><span>Active recall</span></button>
+          <button data-page="progress" class="nav-link"><span class="nav-icon">▥</span><span>My progress</span></button>
+        </nav>
+        <p class="sidebar-label sidebar-label-secondary">YOUR LIBRARY</p>
+        <div id="sidebar-library" class="sidebar-library"></div>
+        <button class="add-lesson" id="add-lesson-btn"><span>＋</span> Add pasted notes</button>
+      </div>
+      <div class="sidebar-footer">
+        <div class="sidebar-goal"><div class="goal-top"><span>Daily motivation</span><span>✦</span></div><strong>Progress, not perfection.</strong><small>One focused review at a time.</small></div>
+        <button id="theme-toggle" class="bottom-action" aria-label="Toggle color theme"><span id="theme-icon">☾</span><span id="theme-label">Dark mode</span></button>
+        <button id="sidebar-collapse" class="bottom-action"><span>⇤</span><span>Collapse sidebar</span></button>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-left"><button id="mobile-menu" class="icon-btn mobile-menu" aria-label="Open navigation">☰</button><button id="desktop-menu" class="icon-btn desktop-menu" aria-label="Expand or collapse navigation">☷</button><div class="breadcrumb">My workspace <span>/</span> <strong id="breadcrumb-page">Dashboard</strong></div></div>
+        <div class="topbar-right"><button id="global-search" class="search-pill"><span>⌕</span><span>Search concepts</span><kbd>/</kbd></button><span class="topbar-divider"></span><div class="avatar" aria-label="Local learner profile">S</div></div>
+      </header>
+      <main id="main-content" tabindex="-1" aria-live="polite"></main>
+      <footer class="app-footer"><span>StudySpace · Built for your STS Long Quiz 1</span><span>Offline-first · Progress stays on this device</span></footer>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="modal-layer" hidden><div class="modal-scrim" data-close-modal="true"></div><section id="modal-content" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"></section></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
